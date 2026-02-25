@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PixelTroupe Lightning</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+</head>
+<body>
+    <div class="layout">
+        <section class="world-panel">
+            <header>
+                <h1>PixelTroupe Lightning</h1>
+                <div id="status-line">Connecting...</div>
+            </header>
+            <canvas id="world-canvas" width="768" height="512"></canvas>
+        </section>
+
+        <aside class="sidebar">
+            <div class="controls">
+                <button id="pause-btn">Pause / Resume</button>
+                <button id="speed-btn">Speed x4</button>
+                <button id="train-btn">Train now</button>
+                <button id="spawn-btn">Spawn villager</button>
+            </div>
+
+            <section class="agent-panel">
+                <h2>Villagers</h2>
+                <ul id="agent-list"></ul>
+            </section>
+
+            <section class="chat-panel">
+                <h2>Poke Agent</h2>
+                <div id="selected-agent">No agent selected</div>
+                <textarea id="agent-message" rows="3" placeholder="Say something to a villager..."></textarea>
+                <button id="send-btn">Send message</button>
+            </section>
+
+            <section class="feed-panel">
+                <h2>Recent Chat</h2>
+                <ul id="chat-feed"></ul>
+            </section>
+        </aside>
+    </div>
+
+    <script src="/static/main.js"></script>
+</body>
+</html>
