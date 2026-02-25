@@ -56,13 +56,27 @@ The MVP runs with local fallback mock agents out of the box. To try real integra
 
 ```bash
 pip install "git+https://github.com/microsoft/TinyTroupe.git@main"
+pip install agentlightning
+```
+
+For bleeding-edge AgentLightning changes, you can install from source instead:
+
+```bash
 pip install "git+https://github.com/microsoft/agent-lightning.git@main"
 ```
 
 When those packages are present:
 
-- `sim/agents.py` attempts to construct TinyTroupe personas
-- `sim/lightning_hooks.py` emits state/action/reward through AgentLightning APIs
+- `sim/agents.py` uses TinyTroupe's current module API (`tinytroupe.agent`, `tinytroupe.environment`, `tinytroupe.factory`) and builds seeded `TinyPerson` villagers
+- `sim/world.py` accepts both PixelTroupe JSON actions and TinyTroupe native action payloads (`type/content/target`)
+- `sim/lightning_hooks.py` emits through modern AgentLightning emitters (`emit_object`, `emit_reward`) with legacy fallback support
+
+By default, TinyTroupe agents are enabled only when `OPENAI_API_KEY` or `AZURE_OPENAI_KEY` is set.  
+To force TinyTroupe mode explicitly, set:
+
+```bash
+export PIXELTROUPE_FORCE_TINYTROUPE=1
+```
 
 ## Action parsing contract
 

@@ -28,26 +28,81 @@ class LightningHooks:
 
     def __init__(self) -> None:
         self.available = _agl is not None
+        self._legacy_state_emitter = (
+            getattr(_agl, "emit_state", None) if self.available else None
+        )
+        self._legacy_action_emitter = (
+            getattr(_agl, "emit_action", None) if self.available else None
+        )
 
-    def _safe_emit(self, method_name: str, payload: Any) -> None:
+    def _has_active_tracer(self) -> bool:
         if not self.available:
-            return
-        emitter = getattr(_agl, method_name, None)
-        if callable(emitter):
+            return False
+
+        get_active_tracer = getattr(_agl, "get_active_tracer", None)
+        if callable(get_active_tracer):
             try:
-                emitter(payload)
+                return get_active_tracer() is not None
             except Exception:
-                # Emission should never break the sim loop.
-                return
+                return False
+        return False
+
+    def _safe_call(self, fn: Any, *args: Any, **kwargs: Any) -> None:
+        if not callable(fn):
+            return
+        try:
+            fn(*args, **kwargs)
+        except TypeError:
+            if kwargs:
+                try:
+                    fn(*args)
+                except Exception:
+                    return
+        except Exception:
+            # Emission should never break the sim loop.
+            return
 
     def emit_state(self, payload: dict[str, Any]) -> None:
-        self._safe_emit("emit_state", payload)
+        if not self.available:
+            return
+
+        if callable(self._legacy_state_emitter):
+            self._safe_call(self._legacy_state_emitter, payload)
+            return
+
+        emit_object = getattr(_agl, "emit_object", None)
+        self._safe_call(
+            emit_object,
+            payload,
+            attributes={"pixeltroupe.event": "state"},
+            propagate=self._has_active_tracer(),
+        )
 
     def emit_action(self, payload: dict[str, Any]) -> None:
-        self._safe_emit("emit_action", payload)
+        if not self.available:
+            return
+
+        if callable(self._legacy_action_emitter):
+            self._safe_call(self._legacy_action_emitter, payload)
+            return
+
+        emit_object = getattr(_agl, "emit_object", None)
+        self._safe_call(
+            emit_object,
+            payload,
+            attributes={"pixeltroupe.event": "action"},
+            propagate=self._has_active_tracer(),
+        )
 
     def emit_reward(self, reward: float) -> None:
-        self._safe_emit("emit_reward", reward)
+        if not self.available:
+            return
+        emit_reward = getattr(_agl, "emit_reward", None)
+        self._safe_call(
+            emit_reward,
+            reward,
+            propagate=self._has_active_tracer(),
+        )
 
     def compute_reward(
         self,
@@ -83,7 +138,7 @@ class LightningHooks:
         if not self.available:
             return False
 
-        for method_name in ("train", "optimize", "step"):
+        for method_name in ("train", "optimize", "step", "fit", "dev"):
             fn = getattr(_agl, method_name, None)
             if not callable(fn):
                 continue

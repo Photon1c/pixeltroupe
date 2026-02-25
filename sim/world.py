@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import time
 from collections import deque
 from typing import Any
@@ -12,7 +13,8 @@ from config import GRID_HEIGHT, GRID_WIDTH, MAX_CHAT_LINES
 from sim.lightning_hooks import ActionOutcome, LightningHooks
 
 try:
-    from tinytroupe import TinyPerson, TinyWorld  # type: ignore
+    from tinytroupe.agent import TinyPerson  # type: ignore
+    from tinytroupe.environment import TinyWorld  # type: ignore
 except Exception:  # pragma: no cover - TinyTroupe is optional during bootstrapping
     class TinyWorld:  # type: ignore
         def __init__(self, name: str, agents: list[Any]) -> None:
@@ -28,6 +30,17 @@ _DIR_TO_DELTA: dict[str, tuple[int, int]] = {
     "south": (0, 1),
     "east": (1, 0),
     "west": (-1, 0),
+}
+
+_DIRECTION_KEYWORDS: dict[str, str] = {
+    "north": "north",
+    "south": "south",
+    "east": "east",
+    "west": "west",
+    "up": "north",
+    "down": "south",
+    "left": "west",
+    "right": "east",
 }
 
 
@@ -66,9 +79,25 @@ class PixelTinyWorld(TinyWorld):
         if not hasattr(agent, "user_bonus"):
             setattr(agent, "user_bonus", 0.0)
         if not hasattr(agent, "goal"):
-            persona = getattr(agent, "persona", {})
-            persona_goal = persona.get("goal", "chill") if isinstance(persona, dict) else "chill"
-            setattr(agent, "goal", persona_goal)
+            persona_goal = None
+            get_persona_value = getattr(agent, "get", None)
+            if callable(get_persona_value):
+                try:
+                    persona_goal = get_persona_value("goal")
+                except Exception:
+                    persona_goal = None
+
+            if persona_goal is None:
+                persona = getattr(agent, "persona", {})
+                if isinstance(persona, dict):
+                    persona_goal = persona.get("goal")
+
+            if persona_goal is None:
+                private_persona = getattr(agent, "_persona", {})
+                if isinstance(private_persona, dict):
+                    persona_goal = private_persona.get("goal")
+
+            setattr(agent, "goal", persona_goal or "chill")
 
         occupied = {
             (int(a.x), int(a.y))
@@ -102,19 +131,9 @@ class PixelTinyWorld(TinyWorld):
 
     def parse_action(self, response_str: Any) -> dict[str, Any]:
         """Safely parse agent response into structured action dict."""
-        action_raw: dict[str, Any]
-
-        if isinstance(response_str, dict):
-            action_raw = response_str
-        else:
-            text = str(response_str or "").strip()
-            try:
-                parsed = json.loads(text)
-                action_raw = parsed if isinstance(parsed, dict) else {}
-            except (json.JSONDecodeError, TypeError):
-                action_raw = {}
-                if text and not text.startswith("{"):
-                    action_raw = {"action": "say", "content": text}
+        action_raw = self._extract_action_payload(response_str)
+        if "type" in action_raw and "action" not in action_raw:
+            action_raw = self._translate_tinytroupe_action(action_raw)
 
         action = {str(key).lower(): value for key, value in action_raw.items()}
         if "dir" in action and "direction" not in action:
@@ -125,15 +144,92 @@ class PixelTinyWorld(TinyWorld):
             action["content"] = action.pop("message")
 
         act_type = str(action.get("action", "idle")).lower().strip()
+        if act_type in ("moveandsay", "move-and-say", "move_and_talk"):
+            act_type = "move_and_say"
+
         direction = self._normalize_direction(action.get("direction"))
         content_raw = action.get("content")
         content = str(content_raw).strip() if content_raw is not None else ""
+        if direction is None and act_type in ("move", "move_and_say"):
+            direction = self._direction_from_text(content)
 
         return {
             "action": act_type or "idle",
             "direction": direction,
             "content": content if content else None,
         }
+
+    def _extract_action_payload(self, response_value: Any) -> dict[str, Any]:
+        if isinstance(response_value, dict):
+            nested_action = response_value.get("action")
+            if isinstance(nested_action, dict):
+                return nested_action
+            return response_value
+
+        if isinstance(response_value, list):
+            for item in response_value:
+                if not isinstance(item, dict):
+                    continue
+                nested_action = item.get("action")
+                if isinstance(nested_action, dict):
+                    return nested_action
+                if "type" in item or "action" in item:
+                    return item
+            return {}
+
+        text = str(response_value or "").strip()
+        if not text:
+            return {}
+
+        try:
+            parsed = json.loads(text)
+            return self._extract_action_payload(parsed)
+        except (json.JSONDecodeError, TypeError):
+            if text and not text.startswith("{"):
+                return {"action": "say", "content": text}
+            return {}
+
+    def _translate_tinytroupe_action(self, action_raw: dict[str, Any]) -> dict[str, Any]:
+        """
+        Map TinyTroupe-native action format (`type/content/target`) to PixelTroupe actions.
+        """
+        action_type = str(action_raw.get("type", "")).strip().upper()
+        content = str(action_raw.get("content", "") or "").strip()
+        target = str(action_raw.get("target", "") or "").strip()
+
+        if content.startswith("{"):
+            try:
+                nested = json.loads(content)
+                if isinstance(nested, dict):
+                    return nested
+            except json.JSONDecodeError:
+                pass
+
+        if action_type in ("MOVE", "WALK", "GO"):
+            direction = self._normalize_direction(action_raw.get("direction"))
+            if direction is None:
+                direction = self._direction_from_text(content)
+            return {"action": "move", "direction": direction, "content": None}
+
+        if action_type in ("TALK", "SAY"):
+            return {"action": "say", "content": content or None}
+
+        if action_type == "REACH_OUT":
+            if content:
+                speech = content
+            elif target:
+                speech = f"Trying to reach {target}."
+            else:
+                speech = "Trying to reach someone nearby."
+            return {"action": "say", "content": speech}
+
+        if action_type in ("THINK", "REFLECT", "PLAN", "DONE"):
+            return {"action": "idle"}
+
+        if content:
+            return {"action": "say", "content": content}
+
+        return {"action": "idle"}
 
     def _normalize_direction(self, direction: Any) -> str | None:
         normalized = str(direction or "").lower().strip()
@@ -145,6 +241,13 @@ class PixelTinyWorld(TinyWorld):
         }
         normalized = aliases.get(normalized, normalized)
         return normalized if normalized in _DIR_TO_DELTA else None
+
+    def _direction_from_text(self, text: str) -> str | None:
+        lowered = (text or "").lower()
+        for token, direction in _DIRECTION_KEYWORDS.items():
+            if re.search(rf"\b{token}\b", lowered):
+                return direction
+        return None
 
     def _mood_from_text(self, text: str) -> str:
         lowered = text.lower()
@@ -229,25 +332,38 @@ class PixelTinyWorld(TinyWorld):
             '{"action":"idle"}.'
         )
 
-    def _invoke_agent(self, agent: TinyPerson, observation: str) -> str:
+    def _invoke_agent(self, agent: TinyPerson, observation: str) -> Any:
         for method_name in ("listen_and_act", "act"):
             method = getattr(agent, method_name, None)
             if not callable(method):
                 continue
-            try:
-                response = method(observation)
-            except TypeError:
+
+            if method_name == "listen_and_act":
+                attempts = [
+                    ((observation,), {"return_actions": True}),
+                    ((observation,), {}),
+                    ((), {"return_actions": True}),
+                    ((), {}),
+                ]
+            else:
+                attempts = [
+                    ((), {"return_actions": True}),
+                    ((observation,), {"return_actions": True}),
+                    ((), {}),
+                    ((observation,), {}),
+                ]
+
+            for args, kwargs in attempts:
                 try:
-                    response = method()
+                    response = method(*args, **kwargs)
+                except TypeError:
+                    continue
                 except Exception:
                     continue
-            except Exception:
-                continue
 
-            if isinstance(response, (dict, list)):
-                return json.dumps(response)
-            return str(response or "")
-        return '{"action":"idle"}'
+                return response
+
+        return {"action": "idle"}
 
     def tick(self) -> dict[str, Any]:
         for agent in list(self.agents):
