@@ -66,20 +66,33 @@ class PixelTinyWorld(TinyWorld):
         if not hasattr(agent, "user_bonus"):
             setattr(agent, "user_bonus", 0.0)
         if not hasattr(agent, "goal"):
-            persona_goal = getattr(getattr(agent, "persona", {}), "get", lambda _k, _d: _d)(
-                "goal",
-                "chill",
-            )
+            persona = getattr(agent, "persona", {})
+            persona_goal = persona.get("goal", "chill") if isinstance(persona, dict) else "chill"
             setattr(agent, "goal", persona_goal)
 
-        occupied = {(int(a.x), int(a.y)) for a in self.agents if hasattr(a, "x") and hasattr(a, "y")}
+        occupied = {
+            (int(a.x), int(a.y))
+            for a in self.agents
+            if a is not agent and hasattr(a, "x") and hasattr(a, "y")
+        }
         free_tiles = [
             (x, y)
             for x in range(1, self.grid_w - 1)
             for y in range(1, self.grid_h - 1)
             if (x, y) not in occupied
         ]
-        if not hasattr(agent, "x") or not hasattr(agent, "y"):
+
+        has_position = hasattr(agent, "x") and hasattr(agent, "y")
+        if has_position:
+            current_x = int(getattr(agent, "x", -999))
+            current_y = int(getattr(agent, "y", -999))
+            in_bounds = 1 <= current_x < self.grid_w - 1 and 1 <= current_y < self.grid_h - 1
+            colliding = (current_x, current_y) in occupied
+        else:
+            in_bounds = False
+            colliding = True
+
+        if (not has_position) or (not in_bounds) or colliding:
             if free_tiles:
                 x, y = random.choice(free_tiles)
             else:
