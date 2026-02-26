@@ -1,5 +1,9 @@
 # PixelTroupe Lightning
 
+![pixeltroupe1](media/pixeltroupe_lightning.PNG)
+
+![pixeltroupe1](media/pixeltroupe_sidebar.PNG)
+
 TinyTroupe-style villagers in a retro 2D grid world with live Flask + Socket.IO visualization, plus AgentLightning reward hooks.
 
 This repository now includes a runnable MVP focused on **action parsing first**:
